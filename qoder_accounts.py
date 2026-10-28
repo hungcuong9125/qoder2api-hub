@@ -1415,6 +1415,7 @@ class Account(object):
         self.note = str(data.get("note") or "")
         self._proxy_supplied = "proxy" in data
         self.proxy = qoder_account_proxy.normalize_proxy(data.get("proxy", ""))
+        self.proxy_info = data.get("proxyInfo") if isinstance(data.get("proxyInfo"), dict) else None
         self.domain = str(data.get("domain") or "")
         self.realm = str(data.get("realm") or detect_realm_from_domain(self.domain))
         if self.realm not in REALM_CONFIGS:
@@ -1525,6 +1526,7 @@ class Account(object):
             "refreshToken": self.refresh_token,
             "personalToken": self.personal_token,
             "proxy": self.proxy,
+            "proxyInfo": self.proxy_info,
             "expiresAt": self.expires_at,
             "addedAt": self.added_at,
             "source": self.source,
@@ -1599,6 +1601,7 @@ class Account(object):
         exp = self.expires_at
         return {
             **qoder_account_proxy.public_proxy(self.proxy),
+            "proxyInfo": self.proxy_info,
             "uid": self.uid,
             "nickname": self.nickname or (self.uid[:8] if self.uid else "?"),
             "domain": self.domain,
@@ -3628,11 +3631,15 @@ class AccountPool(object):
             if account is None:
                 return None
             previous = account.proxy
+            previous_info = account.proxy_info
+            if previous != proxy:
+                account.proxy_info = None
             account.proxy = proxy
             try:
                 account.save(self.dir)
             except Exception:
                 account.proxy = previous
+                account.proxy_info = previous_info
                 raise
             account._proxy_supplied = True
             return account.public()

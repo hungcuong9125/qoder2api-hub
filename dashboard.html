@@ -1964,6 +1964,23 @@ window.initLangSystem();
   </div>
 
   <div id="pageSettings" class="main-page">
+    <section id="accountTestSettings">
+      <h2>账号测试模型</h2>
+      <p class="hint">账号列表的测试按钮使用此模型，不再弹出选择框。设置仅保存在当前浏览器；默认 DeepSeek-Flash。</p>
+      <div id="accountTestControls" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+        <label for="accountTestModel">模型 ID</label>
+        <select id="accountTestModel" style="max-width:100%"><option value="dfmodel">DeepSeek-Flash</option></select>
+        <button class="sec" onclick="saveAccountTestModel()">保存测试模型</button>
+      </div>
+      <p class="hint" id="accountTestCatalogStatus"></p>
+      <p class="hint">auto 可能需要付费权限；单个模型失败不代表代理失效。</p>
+    </section>
+    <section id="accountProxySettings">
+      <h2>账号出口代理</h2>
+      <p class="hint">当前按账号保存代理地址，尚未提供共享代理槽。请在账号列表点击 Proxy 配置；保存后用于后续请求。</p>
+      <p class="hint">检查代理出口 IP 和地区。</p>
+      <button class="sec" onclick="switchMainTab('accounts')">管理账号代理</button>
+    </section>
     <div style="margin-bottom:16px">
       <h2 style="margin:0;font-size:16px;color:var(--fg)">网关设置</h2>
     </div>
@@ -2223,6 +2240,13 @@ window.initLangSystem();
     </div>
     <div class="modal-bd">
       <p id="accountProxyName" class="mono" style="overflow-wrap:anywhere"></p>
+      <div id="accountProxySaved" style="border:1px solid var(--line);border-radius:10px;padding:14px;margin-bottom:16px;display:none">
+        <strong>已保存的代理</strong>
+        <p class="hint">此代理已保存并用于后续请求。登录信息已隐藏，不需要重新输入。</p>
+        <div id="accountProxyCurrent" class="mono no-i18n" style="overflow-wrap:anywhere;margin-bottom:12px"></div>
+        <button class="sec" id="accountProxyReplace" onclick="replaceAccountProxy()">更换代理</button>
+        <button class="danger" id="accountProxyRemove" onclick="removeAccountProxy()">删除代理</button>
+      </div>
       <label for="accountProxyMode">连接方式</label>
       <select id="accountProxyMode" onchange="updateAccountProxyForm()" style="width:100%;margin:8px 0 14px">
         <option value="inherit">继承环境变量</option>
@@ -2232,10 +2256,9 @@ window.initLangSystem();
       <div id="accountProxyCustom">
         <label for="accountProxyUrl">HTTP 代理地址</label>
         <input id="accountProxyUrl" type="password" autocomplete="new-password" spellcheck="false" placeholder="http://user:password@host:port" style="width:100%;box-sizing:border-box;margin-top:8px">
-        <p id="accountProxyCurrent" class="hint" style="overflow-wrap:anywhere"></p>
+        <p class="hint">输入新的完整代理地址后点击保存。取消不会更改已保存的代理。</p>
         <p class="hint">支持 HTTP CONNECT 和用户名密码；暂不支持 SOCKS 或 HTTPS 代理服务器。代理失败不会自动直连。</p>
       </div>
-      <p class="hint">应用于聊天、凭证刷新、积分查询和签到。初次登录和导入凭证仍使用环境代理。测试仅检查连接，不验证账号凭证。</p>
       <p id="accountProxyResult" class="hint" role="status" aria-live="polite"></p>
     </div>
     <div class="modal-ft">
@@ -4027,11 +4050,13 @@ function accountRow(a){
     +   '<div style="font-weight:600;font-size:13px;color:var(--fg);display:flex;align-items:center;gap:6px;flex-wrap:wrap">'
     +     esc(a.nickname) + teamBadge(a) + checkinBadge(a) + '</div>'
     + '<div class="mono" style="color:var(--dim);font-size:11px">' + esc(a.uid.slice(0,8)) + ' · ' + esc(a.source) + ' · 到期 ' + esc(a.expiresIn || '?') + '</div>'
-    + (a.machineId ? ('<div class="mono" style="color:var(--dim);font-size:10px;margin-top:2px" title="由账号UID稳定派生的专属设备码，防多号关联风控">设备码: ' + esc(a.machineId.slice(0,14)) + '...</div>') : '')
+    + (a.machineId ? ('<div class="mono" style="display:none;color:var(--dim);font-size:10px;margin-top:2px" title="由账号UID稳定派生的专属设备码，防多号关联风控">设备码: ' + esc(a.machineId.slice(0,14)) + '...</div>') : '')
     + (a.note ? ('<div class="hint" style="margin:3px 0 0" title="备注（issue #69）"><span style="color:var(--accent)">备注</span> ' + esc(a.note) + '</div>') : '')
-    + '<div class="mono" style="color:var(--dim);font-size:10px;overflow-wrap:anywhere">Proxy: '
-    + esc(a.proxyMode === 'custom' ? a.proxyMasked : (a.proxyMode === 'direct' ? 'direct' : 'env')) + '</div>'
     + err + '</td>'
+    + '<td style="text-align:left;min-width:180px;max-width:260px;overflow-wrap:anywhere">'
+    + '<span class="badge">' + (a.proxyMode === 'custom' ? '专用代理已配置' : (a.proxyMode === 'direct' ? '直连' : '继承环境变量')) + '</span>'
+    + (a.proxyMode === 'custom' ? '<div class="mono" style="font-size:10px;margin-top:4px">' + esc(a.proxyMasked || '') + '</div>' : '')
+    + '</td>'
     + '<td style="text-align:center">' + state + _ckOff + '</td>'
     + '<td style="text-align:center;white-space:nowrap">' + accountGuardBadge(a) + '</td>'
     + '<td style="text-align:left;white-space:nowrap">' + credText
@@ -4059,20 +4084,48 @@ function accountRow(a){
 
 let accountProxyState = null;
 let accountProxyBusy = false;
-function editAccountProxy(uid){
+async function editAccountProxy(uid){
   if(accountProxyBusy) return;
-  const acc = (window.ACCOUNTS || []).find(a => String(a.uid) === String(uid));
-  if(!acc) return;
-  accountProxyState = {uid: acc.uid, mode: acc.proxyMode || 'inherit'};
-  document.getElementById('accountProxyName').textContent = acc.nickname || acc.uid;
-  document.getElementById('accountProxyMode').value = accountProxyState.mode;
+  accountProxyState = null;
+  document.getElementById('accountProxyName').textContent = '';
   document.getElementById('accountProxyUrl').value = '';
-  document.getElementById('accountProxyCurrent').textContent = acc.proxyMasked
-    ? acc.proxyMasked + ' — 留空保留现有代理' : '';
-  document.getElementById('accountProxyResult').textContent = '';
-  updateAccountProxyForm();
+  document.getElementById('accountProxyCurrent').textContent = '';
+  document.getElementById('accountProxySaved').style.display = 'none';
+  document.getElementById('accountProxyCustom').style.display = 'none';
+  document.getElementById('accountProxyMode').value = 'inherit';
+  document.getElementById('accountProxyResult').textContent = '正在读取已保存的代理…';
   document.getElementById('accountProxyModal').classList.add('show');
-  document.getElementById('accountProxyMode').focus();
+  setAccountProxyBusy(true);
+  try {
+    const data = await getJSON('/accounts?realm=all');
+    const acc = (data.accounts || []).find(a => String(a.uid) === String(uid));
+    if(!acc) throw new Error('请选择账号');
+    window.ACCOUNTS = data.accounts;
+    accountProxyState = {uid: acc.uid, mode: acc.proxyMode || 'inherit', replacing: false};
+    document.getElementById('accountProxyName').textContent = acc.nickname || acc.uid;
+    document.getElementById('accountProxyMode').value = accountProxyState.mode;
+    document.getElementById('accountProxyCurrent').textContent = acc.proxyMasked || '';
+    document.getElementById('accountProxySaved').style.display = accountProxyState.mode === 'custom' ? '' : 'none';
+    updateAccountProxyForm();
+    showProxyInfo(acc.proxyInfo);
+    document.getElementById('accountProxyMode').focus();
+  } catch(e) {
+    document.getElementById('accountProxyResult').textContent = e.message;
+  } finally { setAccountProxyBusy(false); }
+}
+function replaceAccountProxy(){
+  if(accountProxyBusy || !accountProxyState) return;
+  accountProxyState.replacing = true;
+  document.getElementById('accountProxyMode').value = 'custom';
+  updateAccountProxyForm();
+  document.getElementById('accountProxyUrl').focus();
+}
+async function removeAccountProxy(){
+  if(accountProxyBusy || !accountProxyState) return;
+  const warning = '删除已保存的代理并改为直连？此账号将不再使用代理，包括环境代理。';
+  if(!confirm(window.QD_I18N ? window.QD_I18N.t(warning) : warning)) return;
+  document.getElementById('accountProxyMode').value = 'direct';
+  await saveAccountProxy();
 }
 function closeAccountProxy(){
   if(accountProxyBusy) return;
@@ -4082,7 +4135,8 @@ function closeAccountProxy(){
 }
 function updateAccountProxyForm(){
   document.getElementById('accountProxyCustom').style.display =
-    document.getElementById('accountProxyMode').value === 'custom' ? '' : 'none';
+    document.getElementById('accountProxyMode').value === 'custom' && accountProxyState &&
+    (accountProxyState.mode !== 'custom' || accountProxyState.replacing) ? '' : 'none';
   document.getElementById('accountProxyResult').textContent = '';
 }
 function accountProxyPayload(){
@@ -4094,7 +4148,7 @@ function accountProxyPayload(){
   else {
     const value = document.getElementById('accountProxyUrl').value.trim();
     if(value) payload.proxy = value;
-    else if(accountProxyState.mode !== 'custom') throw new Error('请输入代理地址');
+    else if(accountProxyState.mode !== 'custom' || accountProxyState.replacing) throw new Error('请输入代理地址');
     // A masked URL is display-only. Omission tests the saved value; it never
     // writes stars over stored credentials or round-trips them to the browser.
   }
@@ -4102,9 +4156,26 @@ function accountProxyPayload(){
 }
 function setAccountProxyBusy(busy){
   accountProxyBusy = busy;
-  ['accountProxySave', 'accountProxyTest', 'accountProxyMode', 'accountProxyUrl'].forEach(id => {
-    document.getElementById(id).disabled = busy;
+  ['accountProxySave', 'accountProxyTest', 'accountProxyMode', 'accountProxyUrl', 'accountProxyReplace', 'accountProxyRemove'].forEach(id => {
+    document.getElementById(id).disabled = busy || !accountProxyState;
   });
+}
+function proxyInfoText(info){
+  if(!info) return '';
+  const parts = [info.ip, info.city, info.region, info.country].filter(Boolean);
+  if(Number.isFinite(info.latencyMs)) parts.push(info.latencyMs + ' ms');
+  return parts.join(' · ');
+}
+function showProxyInfo(info){
+  const result = document.getElementById('accountProxyResult');
+  result.textContent = '';
+  if(!info) return;
+  const ip = document.createElement('span');
+  ip.style.color = '#1fae7a';
+  ip.style.fontWeight = '600';
+  ip.textContent = info.ip || '';
+  result.appendChild(ip);
+  result.appendChild(document.createTextNode(proxyInfoText(info).slice((info.ip || '').length)));
 }
 async function testAccountProxy(){
   if(accountProxyBusy) return;
@@ -4113,9 +4184,9 @@ async function testAccountProxy(){
     setAccountProxyBusy(true);
     document.getElementById('accountProxyResult').textContent = '正在测试连接…';
     const result = await postJSON('/accounts/proxy/test', payload);
-    document.getElementById('accountProxyResult').textContent = result.ok
-      ? '连接成功 · HTTP ' + result.status + ' · ' + result.latencyMs + ' ms'
-      : '连接失败 · ' + (result.error || ('HTTP ' + result.status));
+    if(result.ok) showProxyInfo(result.proxyInfo);
+    else document.getElementById('accountProxyResult').textContent = '检查代理失败';
+
   } catch(e) {
     document.getElementById('accountProxyResult').textContent = e.message;
   } finally { setAccountProxyBusy(false); }
@@ -4124,9 +4195,11 @@ async function saveAccountProxy(){
   if(accountProxyBusy) return;
   try {
     const payload = accountProxyPayload();
-    if(payload.proxy === undefined){ closeAccountProxy(); return; }
+    if(payload.proxy === undefined){ closeAccountProxy(); toast('已保留保存的代理，无需重新输入', 'ok'); return; }
     setAccountProxyBusy(true);
     const result = await postJSON('/accounts/proxy', payload);
+    if(!result.ok || !result.account) throw new Error('保存失败');
+    try { await postJSON('/accounts/proxy/test', {uid: payload.uid}); } catch(e) {}
     window.ACCOUNTS = (window.ACCOUNTS || []).map(a =>
       String(a.uid) === String(payload.uid) ? Object.assign({}, a, result.account) : a);
     renderAccounts();
@@ -4286,6 +4359,7 @@ function renderAccounts(){
     + sortTh("realm", "版本", "text-align:center;width:76px")
     + sortTh("name", "账号", "text-align:left",
              "点击按账号名/UID 自然序排序（Z Z2 排在 Z Z10 前）：升序 → 降序 → 默认")
+    + '<th style="text-align:left;min-width:180px">Proxy</th>'
     + sortTh("state", "状态", "text-align:center;width:84px",
              "按可用程度排序：可用 → 异常 → 冷却 → 停用 → 过期")
     + '<th style="text-align:center;width:96px">护栏</th>'
@@ -4361,14 +4435,55 @@ async function refreshOne(uid, btn){
     if(btn){ btn.disabled = false; btn.textContent = '刷新'; }
   }
 }
+let accountTestCatalog = [];
+function renderAccountTestModels(){
+  const select = document.getElementById('accountTestModel');
+  const selected = select.value || accountTestModel();
+  const rows = accountTestCatalog;
+  select.innerHTML = '';
+  for(const m of rows){
+    const option = document.createElement('option');
+    option.value = m.upstream_key || m.id;
+    option.textContent = m.id + ' [' + option.value + ']' + (m.enabled === false ? ' — 🔒' : '');
+    select.appendChild(option);
+  }
+  if(!rows.some(m => (m.upstream_key || m.id) === selected)){
+    const option = document.createElement('option');
+    option.value = selected; option.textContent = selected + ' — ✓'; select.appendChild(option);
+  }
+  select.value = selected;
+}
+async function loadAccountTestModels(){
+  try {
+    const data = await getJSON('/v1/models?realm=' + encodeURIComponent(window.VIEW_REALM || 'intl'));
+    accountTestCatalog = data.data || [];
+    renderAccountTestModels();
+    document.getElementById('accountTestCatalogStatus').textContent = '';
+  } catch(e) {
+    document.getElementById('accountTestCatalogStatus').textContent = '读取模型失败';
+  }
+}
+function accountTestModel(){
+  try { return (localStorage.getItem('qd.accountTestModel') || '').trim() || 'dfmodel'; }
+  catch(e) { return 'dfmodel'; }
+}
+function saveAccountTestModel(){
+  const model = document.getElementById('accountTestModel').value.trim();
+  if(!model){ toast('请输入模型 ID', 'bad'); return; }
+  try {
+    localStorage.setItem('qd.accountTestModel', model);
+    toast('测试模型已保存', 'ok');
+  } catch(e) { toast('无法保存浏览器设置', 'bad'); }
+}
 async function testAccount(uid, btn){
+  const model = accountTestModel();
   if(btn){ btn.disabled = true; btn.textContent = '测试中...'; }
   try{
-    const r = await postJSON('/accounts/test', {uid: uid});
+    const r = await postJSON('/accounts/test', {uid: uid, model: model});
     if(r.ok){
       toast('测试通过 (' + r.elapsed_ms + 'ms) [' + r.model + ']: ' + (r.reply || '正常'), 'ok');
     } else {
-      toast('测试失败: ' + (r.error || r.status || '异常'), 'bad');
+      toast('模型测试失败 [' + model + '] · ' + (r.error || r.status || '异常') + '。不代表其他模型或代理不可用。', 'bad');
     }
     await loadAccounts();
   }catch(e){
@@ -5158,6 +5273,12 @@ async function saveModelContext(model, label){
 }
 
 async function loadSettings(showToast){
+  const testModelInput = document.getElementById('accountTestModel');
+  if(testModelInput){
+    testModelInput.innerHTML = '<option value="' + esc(accountTestModel()) + '">' + esc(accountTestModel()) + '</option>';
+    testModelInput.value = accountTestModel();
+    loadAccountTestModels();
+  }
   try {
     const data = await getJSON('/settings');
     // issue #106：模型上下文档缓存给模型库表用（保存后也走这份）

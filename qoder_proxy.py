@@ -10072,24 +10072,37 @@ class Handler(BaseHTTPRequestHandler):
                 return self._error(404, "account not found", "invalid_request_error")
             log("account proxy updated: %s (%s)" % (uid[:8], updated["proxyMode"]))
             return self._json(200, {"ok": True, "account": updated})
-        # Fixed, unauthenticated destination: this is a transport probe,
-        # not an account-token test or an arbitrary-URL fetch endpoint.
-        url = get_realm_config(account.realm)["openapi"] + "/"
-        req = urllib.request.Request(validate_public_http_url(url), method="HEAD")
+        url = "https://ipv4-check-perf.radar.cloudflare.com/api/info"
+        req = urllib.request.Request(url, headers={"Accept": "application/json"})
         started = time.monotonic()
         try:
             with qoder_account_proxy.open_request(
-                    req, proxy, qoder_accounts._proxy_map_from_env(), timeout=8) as resp:
-                status = resp.status
-        except urllib.error.HTTPError as exc:
-            status = exc.code
-            exc.close()
-        except Exception as exc:
-            return self._json(200, {"ok": False,
-                "error": "Connection failed (%s)" % type(exc).__name__})
-        return self._json(200, {"ok": 200 <= status < 500 and status != 407,
-            "status": status, "latencyMs": round((time.monotonic() - started) * 1000),
-            "proxyMode": qoder_account_proxy.public_proxy(proxy)["proxyMode"]})
+                    req, proxy, qoder_accounts._proxy_map_from_env(), timeout=10) as resp:
+                if resp.status != 200:
+                    raise ValueError("unexpected response")
+                data = json.loads(resp.read(16384).decode("utf-8"))
+            import ipaddress
+            ip = str(ipaddress.IPv4Address(data.get("ip_address", "")))
+            info = {"ip": ip, "country": str(data.get("country") or "")[:100],
+                    "region": str(data.get("region") or "")[:100],
+                    "city": str(data.get("city") or "")[:100],
+                    "checkedAt": int(time.time()),
+                    "latencyMs": round((time.monotonic() - started) * 1000)}
+        except Exception:
+            return self._json(200, {"ok": False, "error": "Proxy check failed"})
+        # Do not attach a draft proxy's exit to a different saved proxy.
+        saved = False
+        with POOL._lock:
+            if account.proxy == proxy:
+                previous = account.proxy_info
+                account.proxy_info = info
+                try:
+                    account.save(POOL.dir)
+                except Exception:
+                    account.proxy_info = previous
+                    return self._error(500, "could not save proxy information")
+                saved = True
+        return self._json(200, {"ok": True, "proxyInfo": info, "saved": saved})
 
     def _handle_accounts(self, path, payload):
         """Account-management endpoints (dashboard uses these)."""
@@ -10416,6 +10429,15 @@ class Handler(BaseHTTPRequestHandler):
                                         "model": test_model,
                                         "elapsed_ms": wall_ms,
                                         "reply": reply_text})
+            except UpstreamStatus as exc:
+                # Model entitlement errors are not transport/account failures.
+                # Preserve the envelope status without cooling down every model.
+                wall_ms = int((time.time() - t0) * 1000)
+                return self._json(200, {
+                    "ok": False, "uid": account.uid, "model": test_model,
+                    "status": _to_int_status(exc.status) or 502,
+                    "error": "Model %s: upstream status %s" % (test_model, exc.status),
+                    "elapsed_ms": wall_ms})
             except RateLimited as exc:
                 wall_ms = int((time.time() - t0) * 1000)
                 return self._json(200, {"ok": False, "uid": account.uid,

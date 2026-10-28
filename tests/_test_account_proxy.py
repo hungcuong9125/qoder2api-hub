@@ -152,6 +152,53 @@ class ProxyTests(unittest.TestCase):
         self.assertEqual(result, {"proxy": "proxy"})
         self.assertEqual(server.seen[0][0], "http://origin.invalid/credits")
 
+    def test_account_flows_reach_real_proxy_and_never_connect_directly(self):
+        import socket
+        server, url = self.server()
+        real_connect = socket.create_connection
+        attempts = []
+
+        def guarded_connect(address, *args, **kwargs):
+            attempts.append(address)
+            if address != server.server_address:
+                raise AssertionError("unexpected direct connection: %r" % (address,))
+            return real_connect(address, *args, **kwargs)
+
+        flows = {
+            "refresh_device": lambda a: a.refresh(),
+            "refresh_job_and_pat": lambda a: (setattr(a, "refresh_token", "jrt-fixture"), a.refresh()),
+            "credits": lambda a: a.fetch_credits(),
+            "plan": lambda a: a.fetch_plan(),
+            "checkin": lambda a: a.checkin(),
+            "checkin_claim": lambda a: a._openapi_json(A.PATH_CHECKIN_CLAIM, method="POST", data=b"{}"),
+            "credit_usage": lambda a: a.fetch_credit_usage(force=True),
+            "achievements": lambda a: a.fetch_achievements(force=True),
+            "campaigns": lambda a: a.campaigns(force=True),
+            "campaign_reward": lambda a: a.campaign_reward("fixture"),
+            "campaign_claim": lambda a: a.claim_campaign("fixture"),
+            "cross_realm_quota": lambda a: a._other_realm_quota_hint(),
+            "pro_eligibility": lambda a: a.pro_eligibility(),
+            "pro_claim": lambda a: a.pro_claim(),
+        }
+        for realm in ("cn", "intl"):
+            for name, invoke in flows.items():
+                with self.subTest(realm=realm, flow=name):
+                    account = A.Account({"uid": "routing-fixture", "realm": realm,
+                        "accessToken": "fixture", "refreshToken": "drt-fixture",
+                        "personalToken": "pt-fixture", "proxy": url})
+                    server.seen.clear()
+                    attempts.clear()
+                    with patch.object(socket, "create_connection", side_effect=guarded_connect), \
+                            patch.object(A.time, "sleep"), \
+                            patch.object(A, "openapi_missing", return_value=False), \
+                            patch.object(A.Account, "desktop_headers", return_value={}):
+                        invoke(account)
+                    self.assertTrue(server.seen, name + " never reached the proxy")
+                    self.assertTrue(attempts)
+                    self.assertTrue(all(address == server.server_address for address in attempts),
+                                    "direct fallback attempted: %r" % attempts)
+                    print("ROUTE PASS: %s / %s -> local proxy CONNECT; no direct fallback" % (realm, name))
+
     def test_all_account_json_calls_use_wrapper(self):
         tree = ast.parse((ROOT / "qoder_accounts.py").read_text())
         cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "Account")
@@ -245,16 +292,22 @@ class ProxyTests(unittest.TestCase):
             self.assertEqual(account.proxy, url)
             self.assertNotIn("secret", json.dumps(body))
             error = urllib.error.HTTPError("https://openapi.qoder.com.cn/", 401, "fixture", {}, None)
-            with patch.object(X, "open_request", side_effect=error) as transport:
+            response = unittest.mock.MagicMock()
+            response.__enter__.return_value = response
+            response.status = 200
+            response.read.return_value = b'{"ip_address":"203.0.113.7","country":"VN","region":"Hanoi"}'
+            with patch.object(X, "open_request", return_value=response) as transport:
                 status, body = post("/accounts/proxy/test", {"uid": "api"}, headers)
                 self.assertEqual(status, 200)
                 self.assertTrue(body["ok"])
-                self.assertEqual(body["status"], 401)
+                self.assertEqual(body["proxyInfo"]["ip"], "203.0.113.7")
+                self.assertEqual(account.proxy_info["country"], "VN")
+                self.assertTrue(body["saved"])
                 args = transport.call_args
                 self.assertEqual(args.args[1], url)
-                self.assertEqual(args.args[0].get_method(), "HEAD")
+                self.assertEqual(args.args[0].get_method(), "GET")
                 self.assertIsNone(args.args[0].get_header("Authorization"))
-                self.assertEqual(args.kwargs["timeout"], 8)
+                self.assertEqual(args.kwargs["timeout"], 10)
             with patch.object(X, "open_request", side_effect=OSError("alice:secret")):
                 _, body = post("/accounts/proxy/test", {"uid": "api", "proxy": "direct"}, headers)
                 self.assertFalse(body["ok"])
