@@ -4,7 +4,7 @@
     "name": "Tiếng Việt",
     "dir": "ltr",
     "order": 20,
-    "version": 13
+    "version": 14
   },
   "messages": {
     "Qoder 网关看板": "Qoder",
@@ -42,11 +42,11 @@
     "保存后立即生效；时区见状态行": "Có hiệu lực ngay sau khi lưu; xem múi giờ ở dòng trạng thái",
     "运行概览": "Tổng quan hoạt động",
     "当前版本模型库与能力清单": "Danh mục mô hình và Danh mục mô hình & tính năng của phiên bản",
-    "与官方桌面版一致：官方全部对话模型（含未开通套餐项及官方原因）、官方模型名与介绍、峰谷价、上下文窗口、推理/视觉能力与思考档位": "Đồng nhất với ứng dụng máy tính chính thức: tất cả mô hình hội thoại chính thức (kể cả gói chưa đăng ký và lý do từ phía chính thức), tên và mô tả mô hình, giá cao điểm/thấp điểm, cửa sổ ngữ cảnh, khả năng suy luận/thị giác và mức độ tư duy",
+    "与官方桌面版一致：官方全部对话模型（含未开通套餐项及官方原因）、官方模型名与介绍、峰谷价、上下文窗口、推理/视觉能力与思考档位": "Đồng bộ hóa dữ liệu mô hình theo đúng ứng dụng máy tính chính thức: Cập nhật toàn bộ các mô hình hội thoại (bao gồm gói chưa kích hoạt và lý do); hiển thị chi tiết tên, mô tả, mức giá theo khung giờ, dung lượng ngữ cảnh, cùng các năng lực vision và thinking",
     "模型 ID（填官方模型名）": "ID mô hình (nhập tên mô hình chính thức)",
     "峰谷价 / 消费倍率": "Giá cao / thấp / hệ số tiêu thụ",
     "模型能力": "Tính năng mô hình",
-    "上下文窗口": "Cửa sổ ngữ cảnh",
+    "上下文窗口": "Context windown",
     "思考档位": "Mức độ tư duy",
     "默认出口": "Định tuyến mặc định",
     "当前视图": "Chế độ xem hiện tại",
@@ -350,7 +350,7 @@
     "最近一次对话的出口：未知（旧记录）": "Đường ra của lần hội thoại gần nhất: không rõ (bản ghi cũ)",
     "次": "lượt",
     "Qoder 用量看板": "Bảng điều khiển mức sử dụng Qoder",
-    "上下文设置": "Cài đặt ngữ cảnh",
+    "上下文设置": "Cài đặt context",
     "检查失败（网络不可达或 GitHub 受限）": "Kiểm tra thất bại (không thể kết nối mạng hoặc GitHub bị hạn chế)",
     "更新中…": "Đang cập nhật…",
     "正在下载并校验新版本（通常几秒）…": "Đang tải và xác minh phiên bản mới (thường chỉ mất vài giây)…",
@@ -599,7 +599,7 @@
     "被丢弃": "Đã loại bỏ",
     "未请求": "Không được yêu cầu",
     "这一页样本里没有出现挪档或丢弃。": "Mẫu trên trang này không có trường hợp đổi mức hoặc bị loại bỏ.",
-    "需要升级或购买千问官方套餐开放": "Cần nâng cấp hoặc mua gói chính thức Qwen để mở",
+    "需要升级或购买千问官方套餐开放": "Cần nâng cấp hoặc mua gói chính thức để mở",
     "默认": "Mặc định",
     "到期": "Hết hạn",
     "设备码": "Mã thiết bị",
@@ -648,7 +648,7 @@
     "错峰2折": "tránh giờ cao điểm, còn 20% giá",
     "尝鲜体验全球顶级模型，擅长超长自主任务执行": "Trải nghiệm sớm mô hình hàng đầu toàn cầu, giỏi thực thi các tác vụ tự chủ siêu dài",
     "标准推理能力，高性价比": "Năng lực suy luận tiêu chuẩn, hiệu năng tốt so với chi phí",
-    "● 低谷生效中": "● Đang áp dụng giờ thấp điểm"
+    "● 低谷生效中": "● Đang áp dụng"
   },
   "patterns": {
     "{0} 个 Key 生效": "{0} API KEY đang hoạt động",
