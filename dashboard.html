@@ -2215,6 +2215,37 @@ window.initLangSystem();
   </div>
 </div>
 
+<div class="modal-mask" id="accountProxyModal" onkeydown="if(event.key === 'Escape') closeAccountProxy()">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="accountProxyTitle" style="width:min(560px,100%)">
+    <div class="modal-hd">
+      <h2 id="accountProxyTitle">账号出口代理</h2>
+      <button class="modal-x" onclick="closeAccountProxy()" aria-label="关闭">×</button>
+    </div>
+    <div class="modal-bd">
+      <p id="accountProxyName" class="mono" style="overflow-wrap:anywhere"></p>
+      <label for="accountProxyMode">连接方式</label>
+      <select id="accountProxyMode" onchange="updateAccountProxyForm()" style="width:100%;margin:8px 0 14px">
+        <option value="inherit">继承环境变量</option>
+        <option value="direct">直连（忽略环境代理）</option>
+        <option value="custom">此账号专用代理</option>
+      </select>
+      <div id="accountProxyCustom">
+        <label for="accountProxyUrl">HTTP 代理地址</label>
+        <input id="accountProxyUrl" type="password" autocomplete="new-password" spellcheck="false" placeholder="http://user:password@host:port" style="width:100%;box-sizing:border-box;margin-top:8px">
+        <p id="accountProxyCurrent" class="hint" style="overflow-wrap:anywhere"></p>
+        <p class="hint">支持 HTTP CONNECT 和用户名密码；暂不支持 SOCKS 或 HTTPS 代理服务器。代理失败不会自动直连。</p>
+      </div>
+      <p class="hint">应用于聊天、凭证刷新、积分查询和签到。初次登录和导入凭证仍使用环境代理。测试仅检查连接，不验证账号凭证。</p>
+      <p id="accountProxyResult" class="hint" role="status" aria-live="polite"></p>
+    </div>
+    <div class="modal-ft">
+      <button class="sec" id="accountProxyTest" onclick="testAccountProxy()">测试连接</button>
+      <button class="sec" onclick="closeAccountProxy()">取消</button>
+      <button id="accountProxySave" onclick="saveAccountProxy()">保存</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-mask" id="importModal">
   <div class="modal" role="dialog" aria-modal="true" style="width:min(720px,100%)">
     <div class="modal-hd">
@@ -3998,6 +4029,8 @@ function accountRow(a){
     + '<div class="mono" style="color:var(--dim);font-size:11px">' + esc(a.uid.slice(0,8)) + ' · ' + esc(a.source) + ' · 到期 ' + esc(a.expiresIn || '?') + '</div>'
     + (a.machineId ? ('<div class="mono" style="color:var(--dim);font-size:10px;margin-top:2px" title="由账号UID稳定派生的专属设备码，防多号关联风控">设备码: ' + esc(a.machineId.slice(0,14)) + '...</div>') : '')
     + (a.note ? ('<div class="hint" style="margin:3px 0 0" title="备注（issue #69）"><span style="color:var(--accent)">备注</span> ' + esc(a.note) + '</div>') : '')
+    + '<div class="mono" style="color:var(--dim);font-size:10px;overflow-wrap:anywhere">Proxy: '
+    + esc(a.proxyMode === 'custom' ? a.proxyMasked : (a.proxyMode === 'direct' ? 'direct' : 'env')) + '</div>'
     + err + '</td>'
     + '<td style="text-align:center">' + state + _ckOff + '</td>'
     + '<td style="text-align:center;white-space:nowrap">' + accountGuardBadge(a) + '</td>'
@@ -4015,6 +4048,7 @@ function accountRow(a){
     +     '<button class="sec mini" onclick="editAccountNote(&quot;' + uidAttr + '&quot;, this)">备注</button>'
     +   '</div>'
     +   '<div style="display:flex;gap:4px;justify-content:center">'
+    +     '<button class="sec mini" onclick="editAccountProxy(&quot;' + uidAttr + '&quot;)">Proxy</button>'
     +     '<button class="sec mini" onclick="exportOne(&quot;' + uidAttr + '&quot;)">导出</button>'
     +     '<button class="danger mini" onclick="deleteAccount(&quot;' + uidAttr + '&quot;,&quot;' + nameAttr + '&quot;, this)">删除</button>'
     +   '</div>'
@@ -4023,6 +4057,86 @@ function accountRow(a){
 }
 
 
+let accountProxyState = null;
+let accountProxyBusy = false;
+function editAccountProxy(uid){
+  if(accountProxyBusy) return;
+  const acc = (window.ACCOUNTS || []).find(a => String(a.uid) === String(uid));
+  if(!acc) return;
+  accountProxyState = {uid: acc.uid, mode: acc.proxyMode || 'inherit'};
+  document.getElementById('accountProxyName').textContent = acc.nickname || acc.uid;
+  document.getElementById('accountProxyMode').value = accountProxyState.mode;
+  document.getElementById('accountProxyUrl').value = '';
+  document.getElementById('accountProxyCurrent').textContent = acc.proxyMasked
+    ? acc.proxyMasked + ' — 留空保留现有代理' : '';
+  document.getElementById('accountProxyResult').textContent = '';
+  updateAccountProxyForm();
+  document.getElementById('accountProxyModal').classList.add('show');
+  document.getElementById('accountProxyMode').focus();
+}
+function closeAccountProxy(){
+  if(accountProxyBusy) return;
+  document.getElementById('accountProxyModal').classList.remove('show');
+  document.getElementById('accountProxyUrl').value = '';
+  accountProxyState = null;
+}
+function updateAccountProxyForm(){
+  document.getElementById('accountProxyCustom').style.display =
+    document.getElementById('accountProxyMode').value === 'custom' ? '' : 'none';
+  document.getElementById('accountProxyResult').textContent = '';
+}
+function accountProxyPayload(){
+  if(!accountProxyState) throw new Error('请选择账号');
+  const mode = document.getElementById('accountProxyMode').value;
+  const payload = {uid: accountProxyState.uid};
+  if(mode === 'inherit') payload.proxy = '';
+  else if(mode === 'direct') payload.proxy = 'direct';
+  else {
+    const value = document.getElementById('accountProxyUrl').value.trim();
+    if(value) payload.proxy = value;
+    else if(accountProxyState.mode !== 'custom') throw new Error('请输入代理地址');
+    // A masked URL is display-only. Omission tests the saved value; it never
+    // writes stars over stored credentials or round-trips them to the browser.
+  }
+  return payload;
+}
+function setAccountProxyBusy(busy){
+  accountProxyBusy = busy;
+  ['accountProxySave', 'accountProxyTest', 'accountProxyMode', 'accountProxyUrl'].forEach(id => {
+    document.getElementById(id).disabled = busy;
+  });
+}
+async function testAccountProxy(){
+  if(accountProxyBusy) return;
+  try {
+    const payload = accountProxyPayload();
+    setAccountProxyBusy(true);
+    document.getElementById('accountProxyResult').textContent = '正在测试连接…';
+    const result = await postJSON('/accounts/proxy/test', payload);
+    document.getElementById('accountProxyResult').textContent = result.ok
+      ? '连接成功 · HTTP ' + result.status + ' · ' + result.latencyMs + ' ms'
+      : '连接失败 · ' + (result.error || ('HTTP ' + result.status));
+  } catch(e) {
+    document.getElementById('accountProxyResult').textContent = e.message;
+  } finally { setAccountProxyBusy(false); }
+}
+async function saveAccountProxy(){
+  if(accountProxyBusy) return;
+  try {
+    const payload = accountProxyPayload();
+    if(payload.proxy === undefined){ closeAccountProxy(); return; }
+    setAccountProxyBusy(true);
+    const result = await postJSON('/accounts/proxy', payload);
+    window.ACCOUNTS = (window.ACCOUNTS || []).map(a =>
+      String(a.uid) === String(payload.uid) ? Object.assign({}, a, result.account) : a);
+    renderAccounts();
+    setAccountProxyBusy(false);
+    closeAccountProxy();
+    toast('代理设置已保存', 'ok');
+  } catch(e) {
+    document.getElementById('accountProxyResult').textContent = e.message;
+  } finally { setAccountProxyBusy(false); }
+}
 // issue #69：账号备注（纯展示字段，服务端 /accounts/note）
 async function editAccountNote(uid, btn){
   const acc = (window.ACCOUNTS || []).find(a => String(a.uid) === String(uid));

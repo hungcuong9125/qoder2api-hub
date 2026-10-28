@@ -28,6 +28,8 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+
+import qoder_account_proxy
 from pathlib import Path
 import uuid
 
@@ -1373,7 +1375,7 @@ def upstream_clock_skew(timeout=4.0):
 
 
 def http_json(url, data=None, method=None, headers=None, timeout=30,
-              retries=3, backoff=1.0, log=None):
+              retries=3, backoff=1.0, log=None, proxy=""):
     """urlopen + json decode with retries. 所有 openapi 调用统一走这里。"""
     validate_public_http_url(url)
     attempts = max(1, int(retries or 1))
@@ -1386,7 +1388,9 @@ def http_json(url, data=None, method=None, headers=None, timeout=30,
             headers=headers or {},
         )
         try:
-            with _opener_for_request().open(req, timeout=timeout) as resp:
+            response = (qoder_account_proxy.open_request(req, proxy, {}, timeout)
+                        if proxy else _opener_for_request().open(req, timeout=timeout))
+            with response as resp:
                 return json.loads(resp.read().decode("utf-8"))
         except Exception as exc:
             last = exc
@@ -1409,6 +1413,8 @@ class Account(object):
         self.nickname = str(data.get("nickname") or "")
         # issue #69：账号备注（纯展示，不参与任何判定）
         self.note = str(data.get("note") or "")
+        self._proxy_supplied = "proxy" in data
+        self.proxy = qoder_account_proxy.normalize_proxy(data.get("proxy", ""))
         self.domain = str(data.get("domain") or "")
         self.realm = str(data.get("realm") or detect_realm_from_domain(self.domain))
         if self.realm not in REALM_CONFIGS:
@@ -1502,6 +1508,11 @@ class Account(object):
         # native / omitted（未构造过时按 omitted 保守处理）；与身份来源正交
         self.machine_headers_state = MACHINE_HEADERS_OMITTED
 
+    def _http_json(self, *args, **kwargs):
+        if self.proxy:
+            kwargs["proxy"] = self.proxy
+        return http_json(*args, **kwargs)
+
     # -- 持久化 ------------------------------------------------------------
     def to_dict(self):
         return {
@@ -1513,6 +1524,7 @@ class Account(object):
             "accessToken": self.access_token,
             "refreshToken": self.refresh_token,
             "personalToken": self.personal_token,
+            "proxy": self.proxy,
             "expiresAt": self.expires_at,
             "addedAt": self.added_at,
             "source": self.source,
@@ -1586,6 +1598,7 @@ class Account(object):
     def public(self):
         exp = self.expires_at
         return {
+            **qoder_account_proxy.public_proxy(self.proxy),
             "uid": self.uid,
             "nickname": self.nickname or (self.uid[:8] if self.uid else "?"),
             "domain": self.domain,
@@ -2175,7 +2188,7 @@ class Account(object):
             "User-Agent": get_realm_config(self.realm).get("ua") or CLIENT_UA,
         }
         try:
-            data = http_json(url, data=json.dumps(payload).encode(), method="POST",
+            data = self._http_json(url, data=json.dumps(payload).encode(), method="POST",
                              headers=headers, timeout=30)
         except urllib.error.HTTPError as exc:
             try:
@@ -2462,7 +2475,7 @@ class Account(object):
             url = base + path
             tried += 1
             try:
-                return http_json(url, method=method, headers=headers,
+                return self._http_json(url, method=method, headers=headers,
                                  data=data, timeout=timeout,
                                  retries=retries), 200, ""
             except urllib.error.HTTPError as exc:
@@ -2529,7 +2542,7 @@ class Account(object):
                 and getattr(self, "machine_headers_state", "") == MACHINE_HEADERS_OMITTED \
                 and not _machine_minimal_disabled():
             try:
-                q2 = http_json(get_realm_config(self.realm)["openapi"] + PATH_CAMPAIGNS,
+                q2 = self._http_json(get_realm_config(self.realm)["openapi"] + PATH_CAMPAIGNS,
                                method="GET",
                                headers=self.desktop_headers(minimal=True),
                                timeout=15, retries=1)
@@ -2633,7 +2646,7 @@ class Account(object):
         cfg = get_realm_config(self.realm)
         url = cfg["openapi"] + (PATH_CAMPAIGN_REWARD % campaign_id)
         try:
-            return http_json(url, method="GET", headers=self.desktop_headers(),
+            return self._http_json(url, method="GET", headers=self.desktop_headers(),
                              timeout=20, retries=1)
         except Exception as exc:
             return {"error": str(exc)}
@@ -2653,7 +2666,7 @@ class Account(object):
         try:
             headers = self.desktop_headers()
             headers["Content-Type"] = "application/json"
-            r = http_json(url, data=b"{}", method="POST",
+            r = self._http_json(url, data=b"{}", method="POST",
                           headers=headers, timeout=20, retries=1)
         except urllib.error.HTTPError as exc:
             try:
@@ -2931,7 +2944,7 @@ class Account(object):
         other = "cn" if self.realm != "cn" else "intl"
         try:
             url = get_realm_config(other)["openapi"] + PATH_QUOTA
-            q = http_json(url, method="GET", headers=self.headers(),
+            q = self._http_json(url, method="GET", headers=self.headers(),
                           timeout=20, retries=1)
         except Exception:
             return ""
@@ -2950,14 +2963,14 @@ class Account(object):
         url = cfg["openapi"] + PATH_QUOTA
         hint = ""
         try:
-            q = http_json(url, method="GET", headers=self.headers(), timeout=30)
+            q = self._http_json(url, method="GET", headers=self.headers(), timeout=30)
         except urllib.error.HTTPError as exc:
             if exc.code in (401, 403):
                 # issue #40：403 常见于 WAF/出口被拦、或令牌区域标记错误。
                 # 先用**桌面端同款头**重试一次（官方客户端会用这套），仍失败
                 # 再给出可操作说明——不再把裸 403 当唯一信息。
                 try:
-                    q = http_json(url, method="GET",
+                    q = self._http_json(url, method="GET",
                                   headers=self.desktop_headers(), timeout=30)
                 except Exception as exc2:
                     hint = self._other_realm_quota_hint()
@@ -3121,7 +3134,7 @@ class Account(object):
         cfg = get_realm_config(self.realm)
         url = cfg["openapi"] + PATH_PLAN
         try:
-            p = http_json(url, method="GET", headers=self.headers(), timeout=15,
+            p = self._http_json(url, method="GET", headers=self.headers(), timeout=15,
                           retries=1)
         except Exception:
             return self.plan
@@ -3137,7 +3150,7 @@ class Account(object):
         cfg = get_realm_config(self.realm)
         url = cfg["openapi"] + PATH_PRO_ELIGIBILITY
         try:
-            m = http_json(url, method="GET", headers=self.headers(), timeout=15,
+            m = self._http_json(url, method="GET", headers=self.headers(), timeout=15,
                           retries=1)
             return True, bool(m.get("eligible"))
         except urllib.error.HTTPError as exc:
@@ -3152,7 +3165,7 @@ class Account(object):
         cfg = get_realm_config(self.realm)
         url = cfg["openapi"] + PATH_PRO_CLAIM
         try:
-            m = http_json(url, data=b"{}", method="POST", headers=self.headers(),
+            m = self._http_json(url, data=b"{}", method="POST", headers=self.headers(),
                           timeout=15, retries=1)
         except urllib.error.HTTPError as exc:
             try:
@@ -3592,6 +3605,8 @@ class AccountPool(object):
             if existing is not None:
                 account.added_at = existing.added_at
                 account.path = existing.path
+                if not account._proxy_supplied:
+                    account.proxy = existing.proxy
                 if not account.credits and existing.credits:
                     account.credits = existing.credits
                 if not account.plan and existing.plan:
@@ -3605,6 +3620,22 @@ class AccountPool(object):
                 self.accounts.append(account)
             account.save(self.dir)
             return account
+
+    def set_proxy(self, uid, proxy):
+        proxy = qoder_account_proxy.normalize_proxy(proxy)
+        with self._lock:
+            account = self.get(uid)
+            if account is None:
+                return None
+            previous = account.proxy
+            account.proxy = proxy
+            try:
+                account.save(self.dir)
+            except Exception:
+                account.proxy = previous
+                raise
+            account._proxy_supplied = True
+            return account.public()
 
     def remove(self, uid):
         with self._lock:
@@ -4524,6 +4555,8 @@ def normalise_import_row(row, realm=None):
         "accessToken": token,
         "refreshToken": str(pick("refreshToken") or ""),
         "personalToken": str(pick("personalToken") or ""),
+        **({"proxy": qoder_account_proxy.normalize_proxy(row["proxy"])}
+           if "proxy" in row else {}),
         "expiresAt": exp,
         "source": "import",
         "enabled": True,
