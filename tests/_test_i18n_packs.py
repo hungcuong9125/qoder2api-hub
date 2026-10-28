@@ -27,6 +27,13 @@ declare_suite(__file__, ["dashboard.html"] +
                   if f.endswith(".json"))])
 
 dash = io.open(DASH, encoding="utf-8").read()
+# 面板也会渲染后端（agent 说明、模型描述、调度文案）吐出的字符串：这些键不在
+# dashboard.html 里，但真的会在 DOM 里命中，所以后端源码同样算「源码」。
+BACKEND_SOURCES = ["qoder_agents.py", "qoder_catalog.py", "qoder_catalog_intl.json",
+                   "qoder_catalog_cn.json", "qoder_scheduler.py", "qoder_proxy.py",
+                   "qoder_tasks.py", "qoder_pricing.py", "qoder_fingerprint.py"]
+dash += "".join(io.open(os.path.join(ROOT_DIR, f), encoding="utf-8").read()
+                for f in BACKEND_SOURCES if os.path.exists(os.path.join(ROOT_DIR, f)))
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{1,31}\.json$")
 SLOT = re.compile(r"\{(\d+)\}")
 
@@ -124,10 +131,19 @@ for name in packs:
 
     # pattern 只有在它的字面片段真存在于源码时才可能命中：槽位把源串切开，
     # 剩下够长的每一段都得能在 dashboard.html 里找到，否则这条永远命不中。
+    # 源码里的长句常被 JS 用 '…' + '…' 拼成多行，渲染出来的是拼好的串，所以比对时也去掉这种拼接
+    dash_js = re.sub(r"'\s*\+\s*'", "", dash)
     dead_pat = []
     for k in tiers["patterns"]:
         parts = [p.strip() for p in re.split(r"\{\d+\}", k) if len(p.strip()) >= 4]
-        if parts and not any(p in dash for p in parts):
+        # 还有一类：源码把一句话拆成多段字面量、中间夹着变量（如 toast），这时每段的
+        # 实词都得在源码里出现；拆不出实词的段照旧按整段比对。
+        def _piece_ok(p):
+            if p in dash or p in dash_js:
+                return True
+            words = [w for w in re.split(r"[\s，；：！：（）()、,.;:+\-/·]+", p) if len(w) >= 2]
+            return bool(words) and all(w in dash_js or w in dash for w in words)
+        if parts and not any(_piece_ok(p) for p in parts):
             dead_pat.append(k)
     check("%s 的 pattern 片段能在源码里找到（找不到说明这条永远不会命中）"
           % name, not dead_pat, dead_pat[:3])
