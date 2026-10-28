@@ -126,6 +126,9 @@ docker run -d --name qoder-proxy --restart unless-stopped \
 
 ## 出口代理
 
+账号级代理：在账号列表点击 **Proxy**，可选择继承环境变量、直连或专用 HTTP 代理。
+支持连接测试和即时保存，详见 [Per-account proxy](account-proxy.md)。
+
 网关访问上游时，**只读取环境变量里的代理**：`HTTPS_PROXY` / `HTTP_PROXY` / `ALL_PROXY`（大小写均可）。没有设置时直接连接。每个请求都会重新读取，所以开关代理不需要重启网关。
 
 - **Windows 不读取系统代理**（即注册表 / WinINET 里的设置）。如果你的机器必须通过系统代理才能上网，需要显式设置一次，然后重启网关：

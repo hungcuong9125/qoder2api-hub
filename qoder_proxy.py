@@ -47,6 +47,7 @@ import random
 import uuid
 
 import qoder_accounts
+import qoder_account_proxy
 import qoder_activity
 import qoder_agents
 import qoder_anthropic
@@ -2827,7 +2828,10 @@ def read_dynamic_models(realm=None):
             url = validate_public_http_url(raw_url)
             req = urllib.request.Request(url, data=sign_body.encode("utf-8"),
                                          method="GET", headers=headers)
-            with urllib.request.urlopen(req, timeout=15) as resp:
+            response = (qoder_account_proxy.open_request(req, account.proxy, {}, timeout=15)
+                        if getattr(account, "proxy", "")
+                        else urllib.request.urlopen(req, timeout=15))
+            with response as resp:
                 payload = json.loads(resp.read().decode("utf-8"))
             break
         except Exception as exc:
@@ -7076,7 +7080,11 @@ def open_upstream(payload, session_key=None, target_realm=None, usage_ctx=None,
                 req = urllib.request.Request(chat_url,
                                              data=encoded.encode("utf-8"),
                                              method="POST", headers=headers)
-                resp = urllib.request.urlopen(req, timeout=600)
+                if getattr(account, "proxy", ""):
+                    resp = qoder_account_proxy.open_request(
+                        req, account.proxy, {}, timeout=600)
+                else:
+                    resp = urllib.request.urlopen(req, timeout=600)
                 break
             except urllib.error.HTTPError as exc:
                 try:
@@ -10041,6 +10049,48 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(200, {"ok": True, "token": token})
         return self._unknown_path_error(path)
 
+    def _handle_account_proxy(self, path, payload):
+        uid = payload.get("uid")
+        if not isinstance(uid, str) or not uid.strip():
+            return self._error(400, "uid is required", "invalid_request_error")
+        account = POOL.get(uid)
+        if account is None:
+            return self._error(404, "account not found", "invalid_request_error")
+        if path == "/accounts/proxy" and "proxy" not in payload:
+            return self._error(400, "proxy is required", "invalid_request_error")
+        try:
+            proxy = qoder_account_proxy.normalize_proxy(
+                payload.get("proxy", account.proxy))
+        except ValueError as exc:
+            return self._error(400, str(exc), "invalid_request_error")
+        if path == "/accounts/proxy":
+            try:
+                updated = POOL.set_proxy(uid, proxy)
+            except Exception:
+                return self._error(500, "could not save account proxy")
+            if updated is None:
+                return self._error(404, "account not found", "invalid_request_error")
+            log("account proxy updated: %s (%s)" % (uid[:8], updated["proxyMode"]))
+            return self._json(200, {"ok": True, "account": updated})
+        # Fixed, unauthenticated destination: this is a transport probe,
+        # not an account-token test or an arbitrary-URL fetch endpoint.
+        url = get_realm_config(account.realm)["openapi"] + "/"
+        req = urllib.request.Request(validate_public_http_url(url), method="HEAD")
+        started = time.monotonic()
+        try:
+            with qoder_account_proxy.open_request(
+                    req, proxy, qoder_accounts._proxy_map_from_env(), timeout=8) as resp:
+                status = resp.status
+        except urllib.error.HTTPError as exc:
+            status = exc.code
+            exc.close()
+        except Exception as exc:
+            return self._json(200, {"ok": False,
+                "error": "Connection failed (%s)" % type(exc).__name__})
+        return self._json(200, {"ok": 200 <= status < 500 and status != 407,
+            "status": status, "latencyMs": round((time.monotonic() - started) * 1000),
+            "proxyMode": qoder_account_proxy.public_proxy(proxy)["proxyMode"]})
+
     def _handle_accounts(self, path, payload):
         """Account-management endpoints (dashboard uses these)."""
         if POOL is None:
@@ -10050,6 +10100,8 @@ class Handler(BaseHTTPRequestHandler):
         if not isinstance(payload, dict):
             return self._error(400, "expected a JSON object",
                                "invalid_request_error")
+        if path in ("/accounts/proxy", "/accounts/proxy/test"):
+            return self._handle_account_proxy(path, payload)
         if path in ("/accounts/credits", "/accounts/credits/fetch"):
             uid = payload.get("uid")
             realm = payload.get("realm")
