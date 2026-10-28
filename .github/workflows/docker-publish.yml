@@ -4,6 +4,8 @@ name: Build Docker image
 # 不需要配置任何 secret，用默认的 GITHUB_TOKEN 即可。
 on:
   push:
+    branches:
+      - "custom/v1.7.9"
     tags:
       - "v*"
   workflow_dispatch:
